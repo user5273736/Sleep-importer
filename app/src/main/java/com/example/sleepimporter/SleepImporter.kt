@@ -8,6 +8,7 @@ import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import java.time.Instant
@@ -41,6 +42,12 @@ class SleepImporter(
 
         for ((index, sessionInfo) in stagesBySession.withIndex()) {
             val (sessionStart, sessionEnd, stages) = sessionInfo
+            
+            // Pausa ogni 50 sessioni per evitare rate limiting
+            if (index > 0 && index % 50 == 0) {
+                Log.d(TAG, "Pausa rate limiting dopo $index sessioni...")
+                delay(3000) // 3 secondi di pausa
+            }
             
             Log.d(TAG, "Sessione $index: $sessionStart -> $sessionEnd (${stages.size} stage)")
             
@@ -112,6 +119,9 @@ class SleepImporter(
 
             Log.d(TAG, "Offset: start=$startOffset, end=$endOffset")
 
+            // Piccolo delay tra ogni inserimento
+            delay(50)
+
             try {
                 val session = SleepSessionRecord(
                     startTime = sessionStart,
@@ -125,8 +135,25 @@ class SleepImporter(
                 successSessions++
                 Log.d(TAG, "✓ Sessione importata!")
             } catch (e: Exception) {
-                Log.e(TAG, "✗ Errore importazione: ${e.message}", e)
-                skippedStages += stages.size
+                // Gestione specifica del rate limiting
+                if (e.message?.contains("Rate limited") == true || 
+                    e.message?.contains("quota has been exceeded") == true) {
+                    Log.w(TAG, "Rate limit raggiunto, attendo 5 secondi...")
+                    delay(5000)
+                    
+                    // Riprova una volta
+                    try {
+                        client.insertRecords(listOf(session))
+                        successSessions++
+                        Log.d(TAG, "✓ Sessione importata (dopo retry)!")
+                    } catch (e2: Exception) {
+                        Log.e(TAG, "✗ Errore anche dopo retry: ${e2.message}", e2)
+                        skippedStages += stages.size
+                    }
+                } else {
+                    Log.e(TAG, "✗ Errore importazione: ${e.message}", e)
+                    skippedStages += stages.size
+                }
             }
         }
 
@@ -191,13 +218,8 @@ class SleepImporter(
     }
 
     private fun parseLocalDateTime(dateTimeStr: String): Instant {
-        // Rimuovi la Z e interpreta come ora locale italiana
-        // La Z nei tuoi dati indica "questo è l'orario da usare" ma è già in ora italiana
         val cleaned = dateTimeStr.replace("Z", "").trim()
-        
         val localDateTime = LocalDateTime.parse(cleaned, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
-        // Converte a Instant usando il fuso orario italiano
-        // Gestisce automaticamente ora legale/solare
         return localDateTime.atZone(zoneId).toInstant()
     }
 
