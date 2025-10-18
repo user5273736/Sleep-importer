@@ -200,11 +200,23 @@ class SleepImporter(
         return sessions
     }
 
-    private fun parseLocalDateTime(dateTimeStr: String): Instant {
-        val localDateTime = LocalDateTime.parse(dateTimeStr, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
-        val instant = localDateTime.atZone(zoneId).toInstant()
-        return instant
+private fun parseLocalDateTime(dateTimeStr: String): Instant {
+    return try {
+        // Se ha la Z finale, è UTC - usa Instant.parse direttamente
+        if (dateTimeStr.endsWith("Z")) {
+            Log.d(TAG, "Parsing UTC: $dateTimeStr")
+            Instant.parse(dateTimeStr)
+        } else {
+            // Altrimenti è ora locale italiana
+            Log.d(TAG, "Parsing locale: $dateTimeStr")
+            val localDateTime = LocalDateTime.parse(dateTimeStr, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+            localDateTime.atZone(zoneId).toInstant()
+        }
+    } catch (e: Exception) {
+        Log.e(TAG, "Errore parsing data: $dateTimeStr", e)
+        throw Exception("Formato data non valido: $dateTimeStr - ${e.message}")
     }
+}
 
     private suspend fun checkIfSessionExists(start: Instant, end: Instant): Boolean {
         return try {
