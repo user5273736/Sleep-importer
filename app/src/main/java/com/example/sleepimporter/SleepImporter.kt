@@ -3,7 +3,7 @@ package com.example.sleepimporter
 import android.content.Context
 import android.net.Uri
 import androidx.health.connect.client.HealthConnectClient
-import androidx.health.connect.client.records.SleepStageRecord
+import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import kotlinx.coroutines.Dispatchers
@@ -12,6 +12,7 @@ import org.json.JSONArray
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
 class SleepImporter(
@@ -20,7 +21,6 @@ class SleepImporter(
 ) {
     data class ImportResult(val successCount: Int, val skippedCount: Int)
 
-    // Usa il fuso orario italiano
     private val zoneId = ZoneId.of("Europe/Rome")
 
     suspend fun importFromJsonUri(uri: Uri): ImportResult = withContext(Dispatchers.IO) {
@@ -29,75 +29,121 @@ class SleepImporter(
         } ?: throw Exception("Impossibile leggere il file")
 
         val json = JSONArray(jsonString)
-        var success = 0
-        var skipped = 0
+        
+        val stagesBySession = groupStagesBySession(json)
+        
+        var successSessions = 0
+        var skippedStages = 0
 
-        for (i in 0 until json.length()) {
-            val obj = json.getJSONObject(i)
-            val startTimeStr = obj.getString("startTime")
-            val endTimeStr = obj.getString("endTime")
-            val stageStr = obj.getString("stage")
-
-            // Parse delle date locali italiane e conversione a Instant
-            val start = parseLocalDateTime(startTimeStr)
-            val end = parseLocalDateTime(endTimeStr)
-
-            val stage = when (stageStr.uppercase()) {
-                "LIGHT" -> SleepStageRecord.STAGE_TYPE_LIGHT
-                "DEEP" -> SleepStageRecord.STAGE_TYPE_DEEP
-                "REM" -> SleepStageRecord.STAGE_TYPE_REM
-                "AWAKE" -> SleepStageRecord.STAGE_TYPE_AWAKE
-                "AWAKE_IN_BED" -> SleepStageRecord.STAGE_TYPE_AWAKE_IN_BED
-                else -> {
-                    skipped++
-                    continue
-                }
-            }
-
-            // Controlla se il record esiste già
-            val exists = checkIfRecordExists(start, end, stage)
+        for ((sessionStart, sessionEnd, stages) in stagesBySession) {
+            val exists = checkIfSessionExists(sessionStart, sessionEnd)
             if (exists) {
-                skipped++
+                skippedStages += stages.size
                 continue
             }
 
-            val record = SleepStageRecord(
-                startTime = start,
-                startZoneOffset = null,
-                endTime = end,
-                endZoneOffset = null,
-                stage = stage
+            val sleepStages = stages.mapNotNull { stage ->
+                val stageType = when (stage.type.uppercase()) {
+                    "LIGHT" -> SleepSessionRecord.StageType.LIGHT
+                    "DEEP" -> SleepSessionRecord.StageType.DEEP
+                    "REM" -> SleepSessionRecord.StageType.REM
+                    "AWAKE" -> SleepSessionRecord.StageType.AWAKE
+                    else -> {
+                        skippedStages++
+                        return@mapNotNull null
+                    }
+                }
+                
+                SleepSessionRecord.Stage(
+                    startTime = stage.start,
+                    endTime = stage.end,
+                    stage = stageType
+                )
+            }
+
+            if (sleepStages.isEmpty()) {
+                skippedStages += stages.size
+                continue
+            }
+
+            val session = SleepSessionRecord(
+                startTime = sessionStart,
+                startZoneOffset = zoneId.rules.getOffset(LocalDateTime.ofInstant(sessionStart, zoneId)),
+                endTime = sessionEnd,
+                endZoneOffset = zoneId.rules.getOffset(LocalDateTime.ofInstant(sessionEnd, zoneId)),
+                stages = sleepStages
             )
 
             try {
-                client.insertRecords(listOf(record))
-                success++
+                client.insertRecords(listOf(session))
+                successSessions++
             } catch (e: Exception) {
                 e.printStackTrace()
-                skipped++
+                skippedStages += stages.size
             }
         }
 
-        ImportResult(successCount = success, skippedCount = skipped)
+        ImportResult(successCount = successSessions, skippedCount = skippedStages)
+    }
+
+    private data class StageInfo(val start: Instant, val end: Instant, val type: String)
+    private data class SessionInfo(val start: Instant, val end: Instant, val stages: List<StageInfo>)
+
+    private fun groupStagesBySession(json: JSONArray): List<SessionInfo> {
+        val sessions = mutableListOf<SessionInfo>()
+        val currentStages = mutableListOf<StageInfo>()
+        var sessionStart: Instant? = null
+
+        for (i in 0 until json.length()) {
+            val obj = json.getJSONObject(i)
+            val start = parseLocalDateTime(obj.getString("startTime"))
+            val end = parseLocalDateTime(obj.getString("endTime"))
+            val type = obj.getString("stage")
+
+            if (sessionStart == null) {
+                sessionStart = start
+            }
+
+            val gap = if (currentStages.isNotEmpty()) {
+                java.time.Duration.between(currentStages.last().end, start).toMinutes()
+            } else {
+                0
+            }
+
+            if (gap > 30) {
+                if (currentStages.isNotEmpty()) {
+                    sessions.add(SessionInfo(sessionStart!!, currentStages.last().end, currentStages.toList()))
+                    currentStages.clear()
+                }
+                sessionStart = start
+            }
+
+            currentStages.add(StageInfo(start, end, type))
+        }
+
+        if (currentStages.isNotEmpty()) {
+            sessions.add(SessionInfo(sessionStart!!, currentStages.last().end, currentStages.toList()))
+        }
+
+        return sessions
     }
 
     private fun parseLocalDateTime(dateTimeStr: String): Instant {
-        // Parse formato: "2025-07-01T01:08:00"
         val localDateTime = LocalDateTime.parse(dateTimeStr, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
         return localDateTime.atZone(zoneId).toInstant()
     }
 
-    private suspend fun checkIfRecordExists(start: Instant, end: Instant, stage: Int): Boolean {
+    private suspend fun checkIfSessionExists(start: Instant, end: Instant): Boolean {
         return try {
             val response = client.readRecords(
                 ReadRecordsRequest(
-                    recordType = SleepStageRecord::class,
+                    recordType = SleepSessionRecord::class,
                     timeRangeFilter = TimeRangeFilter.between(start, end)
                 )
             )
 
             response.records.any {
-                it.startTime == start && it.endTime == end && it.stage == stage
+                it.startTime == start && it.endTime == end
             }
         } catch (e: Exception) {
             false
