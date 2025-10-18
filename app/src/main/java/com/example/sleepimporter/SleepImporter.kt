@@ -36,7 +36,17 @@ class SleepImporter(
         
         val stagesBySession = groupStagesBySession(json)
         Log.d(TAG, "Raggruppati in ${stagesBySession.size} sessioni")
-        
+for (i in 0 until json.length()) {
+    val obj = json.getJSONObject(i)
+    val start = parseLocalDateTime(obj.getString("startTime"))
+    val end = parseLocalDateTime(obj.getString("endTime"))
+    val type = obj.getString("stage")
+
+    Log.d(TAG, "Stage $i: $type - start: $start, end: $end")
+
+    // resto del codice...
+}
+
         var successSessions = 0
         var skippedStages = 0
 
