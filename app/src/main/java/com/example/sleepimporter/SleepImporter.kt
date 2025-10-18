@@ -20,6 +20,7 @@ class SleepImporter(
 ) {
     data class ImportResult(val successCount: Int, val skippedCount: Int)
 
+    // Usa il fuso orario italiano
     private val zoneId = ZoneId.of("Europe/Rome")
 
     suspend fun importFromJsonUri(uri: Uri): ImportResult = withContext(Dispatchers.IO) {
@@ -37,6 +38,7 @@ class SleepImporter(
             val endTimeStr = obj.getString("endTime")
             val stageStr = obj.getString("stage")
 
+            // Parse delle date locali italiane e conversione a Instant
             val start = parseLocalDateTime(startTimeStr)
             val end = parseLocalDateTime(endTimeStr)
 
@@ -52,6 +54,7 @@ class SleepImporter(
                 }
             }
 
+            // Controlla se il record esiste già
             val exists = checkIfRecordExists(start, end, stage)
             if (exists) {
                 skipped++
@@ -79,6 +82,7 @@ class SleepImporter(
     }
 
     private fun parseLocalDateTime(dateTimeStr: String): Instant {
+        // Parse formato: "2025-07-01T01:08:00"
         val localDateTime = LocalDateTime.parse(dateTimeStr, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
         return localDateTime.atZone(zoneId).toInstant()
     }
