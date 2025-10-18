@@ -2,6 +2,7 @@ package com.example.sleepimporter
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.request.ReadRecordsRequest
@@ -12,6 +13,7 @@ import org.json.JSONArray
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
 class SleepImporter(
@@ -21,6 +23,7 @@ class SleepImporter(
     data class ImportResult(val successCount: Int, val skippedCount: Int)
 
     private val zoneId = ZoneId.of("Europe/Rome")
+    private val TAG = "SleepImporter"
 
     suspend fun importFromJsonUri(uri: Uri): ImportResult = withContext(Dispatchers.IO) {
         val jsonString = context.contentResolver.openInputStream(uri)?.use {
@@ -28,28 +31,39 @@ class SleepImporter(
         } ?: throw Exception("Impossibile leggere il file")
 
         val json = JSONArray(jsonString)
+        Log.d(TAG, "Trovati ${json.length()} stage nel file JSON")
         
         val stagesBySession = groupStagesBySession(json)
+        Log.d(TAG, "Raggruppati in ${stagesBySession.size} sessioni")
         
         var successSessions = 0
         var skippedStages = 0
 
-        for ((sessionStart, sessionEnd, stages) in stagesBySession) {
-            if (sessionStart.isAfter(sessionEnd) || sessionStart == sessionEnd) {
+        for ((index, sessionInfo) in stagesBySession.withIndex()) {
+            val (sessionStart, sessionEnd, stages) = sessionInfo
+            
+            Log.d(TAG, "Sessione $index: $sessionStart -> $sessionEnd (${stages.size} stage)")
+            
+            if (sessionStart >= sessionEnd) {
+                Log.w(TAG, "Sessione saltata: start >= end")
                 skippedStages += stages.size
                 continue
             }
 
             val exists = checkIfSessionExists(sessionStart, sessionEnd)
             if (exists) {
+                Log.d(TAG, "Sessione già esistente, saltata")
                 skippedStages += stages.size
                 continue
             }
 
-            val sleepStages = stages.mapNotNull { stage ->
-                if (stage.start.isAfter(stage.end) || stage.start == stage.end) {
+            val sleepStages = mutableListOf<SleepSessionRecord.Stage>()
+            
+            for (stage in stages) {
+                if (stage.start >= stage.end) {
+                    Log.w(TAG, "Stage saltato: start >= end")
                     skippedStages++
-                    return@mapNotNull null
+                    continue
                 }
 
                 val stageValue = when (stage.type.uppercase()) {
@@ -58,41 +72,56 @@ class SleepImporter(
                     "DEEP" -> 3
                     "REM" -> 4
                     else -> {
+                        Log.w(TAG, "Stage tipo sconosciuto: ${stage.type}")
                         skippedStages++
-                        return@mapNotNull null
+                        continue
                     }
                 }
                 
-                SleepSessionRecord.Stage(
-                    startTime = stage.start,
-                    endTime = stage.end,
-                    stage = stageValue
+                sleepStages.add(
+                    SleepSessionRecord.Stage(
+                        startTime = stage.start,
+                        endTime = stage.end,
+                        stage = stageValue
+                    )
                 )
             }
 
             if (sleepStages.isEmpty()) {
+                Log.w(TAG, "Nessuno stage valido per questa sessione")
                 skippedStages += stages.size
                 continue
             }
 
+            val startOffset = ZoneOffset.ofHours(if (isWinterTime(sessionStart)) 1 else 2)
+            val endOffset = ZoneOffset.ofHours(if (isWinterTime(sessionEnd)) 1 else 2)
+
             val session = SleepSessionRecord(
                 startTime = sessionStart,
-                startZoneOffset = zoneId.rules.getOffset(LocalDateTime.ofInstant(sessionStart, zoneId)),
+                startZoneOffset = startOffset,
                 endTime = sessionEnd,
-                endZoneOffset = zoneId.rules.getOffset(LocalDateTime.ofInstant(sessionEnd, zoneId)),
+                endZoneOffset = endOffset,
                 stages = sleepStages
             )
 
             try {
                 client.insertRecords(listOf(session))
                 successSessions++
+                Log.d(TAG, "Sessione importata con successo")
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.e(TAG, "Errore importazione sessione: ${e.message}", e)
                 skippedStages += stages.size
             }
         }
 
+        Log.d(TAG, "Import completato: $successSessions sessioni, $skippedStages stage saltati")
         ImportResult(successCount = successSessions, skippedCount = skippedStages)
+    }
+
+    private fun isWinterTime(instant: Instant): Boolean {
+        val localDateTime = LocalDateTime.ofInstant(instant, zoneId)
+        val month = localDateTime.monthValue
+        return month < 3 || month > 10
     }
 
     private data class StageInfo(val start: Instant, val end: Instant, val type: String)
@@ -110,7 +139,8 @@ class SleepImporter(
             val end = parseLocalDateTime(obj.getString("endTime"))
             val type = obj.getString("stage")
 
-            if (start.isAfter(end) || start == end) {
+            if (start >= end) {
+                Log.w(TAG, "Stage ignorato: start >= end")
                 continue
             }
 
@@ -123,7 +153,9 @@ class SleepImporter(
             if (gap > 30 && currentStages.isNotEmpty()) {
                 val firstStart = currentStages.first().start
                 val lastEnd = currentStages.last().end
-                sessions.add(SessionInfo(firstStart, lastEnd, currentStages.toList()))
+                if (firstStart < lastEnd) {
+                    sessions.add(SessionInfo(firstStart, lastEnd, currentStages.toList()))
+                }
                 currentStages.clear()
             }
 
@@ -133,7 +165,9 @@ class SleepImporter(
         if (currentStages.isNotEmpty()) {
             val firstStart = currentStages.first().start
             val lastEnd = currentStages.last().end
-            sessions.add(SessionInfo(firstStart, lastEnd, currentStages.toList()))
+            if (firstStart < lastEnd) {
+                sessions.add(SessionInfo(firstStart, lastEnd, currentStages.toList()))
+            }
         }
 
         return sessions
@@ -157,6 +191,7 @@ class SleepImporter(
                 it.startTime == start && it.endTime == end
             }
         } catch (e: Exception) {
+            Log.e(TAG, "Errore controllo esistenza: ${e.message}", e)
             false
         }
     }
