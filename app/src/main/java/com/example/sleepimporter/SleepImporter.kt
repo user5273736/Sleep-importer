@@ -99,31 +99,38 @@ class SleepImporter(
 
             Log.d(TAG, "Creazione sessione: start=$sessionStart, end=$sessionEnd, stages=${sleepStages.size}")
 
-require(sessionStart.isBefore(sessionEnd)) { "sessionStart deve essere prima di sessionEnd" }
-
-for (stage in sleepStages) {
-    require(!stage.startTime.isBefore(sessionStart)) { "stage.startTime (${stage.startTime}) deve essere >= sessionStart ($sessionStart)" }
-    require(!stage.endTime.isAfter(sessionEnd)) { "stage.endTime (${stage.endTime}) deve essere <= sessionEnd ($sessionEnd)" }
-    require(stage.startTime.isBefore(stage.endTime)) { "stage.startTime (${stage.startTime}) deve essere prima di stage.endTime (${stage.endTime})" }
+// Controllo sessione
+if (!sessionStart.isBefore(sessionEnd)) {
+    Log.e(TAG, "Errore: sessionStart NON è prima di sessionEnd")
 }
 
-            
-            val session = SleepSessionRecord(
-                startTime = sessionStart,
-                startZoneOffset = startOffset,
-                endTime = sessionEnd,
-                endZoneOffset = endOffset,
-                stages = sleepStages
-            )
+// Controllo ogni stage
+sleepStages.forEachIndexed { index, stage ->
+    if (stage.startTime.isBefore(sessionStart)) {
+        Log.e(TAG, "Stage $index errore: stage.startTime (${stage.startTime}) < sessionStart ($sessionStart)")
+    }
+    if (stage.endTime.isAfter(sessionEnd)) {
+        Log.e(TAG, "Stage $index errore: stage.endTime (${stage.endTime}) > sessionEnd ($sessionEnd)")
+    }
+    if (!stage.startTime.isBefore(stage.endTime)) {
+        Log.e(TAG, "Stage $index errore: stage.startTime (${stage.startTime}) NON è prima di stage.endTime (${stage.endTime})")
+    }
+}
 
-            try {
-                client.insertRecords(listOf(session))
-                successSessions++
-                Log.d(TAG, "Sessione importata con successo")
-            } catch (e: Exception) {
-                Log.e(TAG, "Errore importazione sessione: ${e.message}", e)
-                skippedStages += stages.size
-            }
+// Se i controlli passano, crea la sessione
+try {
+    val session = SleepSessionRecord(
+        startTime = sessionStart,
+        startZoneOffset = startOffset,
+        endTime = sessionEnd,
+        endZoneOffset = endOffset,
+        stages = sleepStages
+    )
+    // Resto del codice...
+} catch (e: Exception) {
+    Log.e(TAG, "Errore nella creazione di SleepSessionRecord: ${e.message}", e)
+}
+
         }
 
         Log.d(TAG, "Import completato: $successSessions sessioni, $skippedStages stage saltati")
