@@ -32,7 +32,7 @@ class MainActivity : ComponentActivity() {
     ) { uri: Uri? ->
         uri?.let {
             selectedFileUri = it
-            statusText.text = "File selezionato: ${it.lastPathSegment}"
+            statusText.text = "File selezionato"
             importButton.isEnabled = true
         }
     }
@@ -51,14 +51,13 @@ class MainActivity : ComponentActivity() {
         selectButton = findViewById(R.id.selectButton)
         importButton = findViewById(R.id.importButton)
 
-        val sdkStatus = HealthConnectClient.sdkStatus(this)
-        if (sdkStatus != HealthConnectClient.SDK_AVAILABLE) {
+        try {
+            healthConnectClient = HealthConnectClient.getOrCreate(this)
+        } catch (e: Exception) {
             statusText.text = "Health Connect non disponibile"
             selectButton.isEnabled = false
             return
         }
-
-        healthConnectClient = HealthConnectClient.getOrCreate(this)
 
         selectButton.setOnClickListener {
             filePickerLauncher.launch("application/json")
@@ -79,10 +78,10 @@ class MainActivity : ComponentActivity() {
                 
                 if (hasAllPermissions && selectedFileUri != null) {
                     importButton.isEnabled = true
-                    statusText.text = "Pronto per l'importazione"
+                    statusText.text = "Pronto per importazione"
                 }
             } catch (e: Exception) {
-                statusText.text = "Errore verifica permessi: ${e.message}"
+                statusText.text = "Errore permessi"
             }
         }
     }
@@ -99,7 +98,6 @@ class MainActivity : ComponentActivity() {
                     importSleepData()
                 }
             } catch (e: Exception) {
-                statusText.text = "Errore richiesta permessi: ${e.message}"
                 Toast.makeText(this@MainActivity, "Errore: ${e.message}", Toast.LENGTH_LONG).show()
             }
         }
@@ -109,22 +107,17 @@ class MainActivity : ComponentActivity() {
         selectedFileUri?.let { uri ->
             lifecycleScope.launch {
                 try {
-                    statusText.text = "Importazione in corso..."
+                    statusText.text = "Importazione..."
                     importButton.isEnabled = false
                     
                     val importer = SleepImporter(healthConnectClient, this@MainActivity)
                     val result = importer.importFromJsonUri(uri)
                     
-                    statusText.text = "Importati: ${result.successCount} sessioni\nSaltati: ${result.skippedCount} stage"
-                    Toast.makeText(
-                        this@MainActivity, 
-                        "Completato! ${result.successCount} sessioni aggiunte", 
-                        Toast.LENGTH_LONG
-                    ).show()
+                    statusText.text = "Importati: ${result.successCount}\nSaltati: ${result.skippedCount}"
+                    Toast.makeText(this@MainActivity, "Completato!", Toast.LENGTH_LONG).show()
                     
                     importButton.isEnabled = true
                 } catch (e: Exception) {
-                    e.printStackTrace()
                     statusText.text = "Errore: ${e.message}"
                     Toast.makeText(this@MainActivity, "Errore: ${e.message}", Toast.LENGTH_LONG).show()
                     importButton.isEnabled = true
