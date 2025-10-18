@@ -60,22 +60,20 @@ class SleepImporter(
             val sleepStages = mutableListOf<SleepSessionRecord.Stage>()
             
             for ((stageIndex, stage) in stages.withIndex()) {
-                Log.d(TAG, "  Stage $stageIndex: ${stage.type} ${stage.start} -> ${stage.end}")
-                
                 if (stage.start >= stage.end) {
-                    Log.w(TAG, "  Stage saltato: start >= end")
+                    Log.w(TAG, "Stage $stageIndex saltato: start >= end")
                     skippedStages++
                     continue
                 }
 
                 if (stage.start < sessionStart) {
-                    Log.e(TAG, "  ERRORE: stage.start < sessionStart")
+                    Log.e(TAG, "Stage $stageIndex ERRORE: start < sessionStart")
                     skippedStages++
                     continue
                 }
 
                 if (stage.end > sessionEnd) {
-                    Log.e(TAG, "  ERRORE: stage.end > sessionEnd")
+                    Log.e(TAG, "Stage $stageIndex ERRORE: end > sessionEnd")
                     skippedStages++
                     continue
                 }
@@ -86,7 +84,7 @@ class SleepImporter(
                     "DEEP" -> 3
                     "REM" -> 4
                     else -> {
-                        Log.w(TAG, "  Stage tipo sconosciuto: ${stage.type}")
+                        Log.w(TAG, "Stage tipo sconosciuto: ${stage.type}")
                         skippedStages++
                         continue
                     }
@@ -107,10 +105,12 @@ class SleepImporter(
                 continue
             }
 
-            val startOffset = ZoneOffset.ofHours(if (isWinterTime(sessionStart)) 1 else 2)
-            val endOffset = ZoneOffset.ofHours(if (isWinterTime(sessionEnd)) 1 else 2)
+            val startLocal = LocalDateTime.ofInstant(sessionStart, zoneId)
+            val endLocal = LocalDateTime.ofInstant(sessionEnd, zoneId)
+            val startOffset = zoneId.rules.getOffset(startLocal)
+            val endOffset = zoneId.rules.getOffset(endLocal)
 
-            Log.d(TAG, "Tentativo inserimento sessione con ${sleepStages.size} stage validi")
+            Log.d(TAG, "Offset: start=$startOffset, end=$endOffset")
 
             try {
                 val session = SleepSessionRecord(
@@ -123,21 +123,15 @@ class SleepImporter(
                 
                 client.insertRecords(listOf(session))
                 successSessions++
-                Log.d(TAG, "✓ Sessione importata con successo!")
+                Log.d(TAG, "✓ Sessione importata!")
             } catch (e: Exception) {
                 Log.e(TAG, "✗ Errore importazione: ${e.message}", e)
                 skippedStages += stages.size
             }
         }
 
-        Log.d(TAG, "Import completato: $successSessions sessioni, $skippedStages stage saltati")
+        Log.d(TAG, "Completato: $successSessions sessioni, $skippedStages stage saltati")
         ImportResult(successCount = successSessions, skippedCount = skippedStages)
-    }
-
-    private fun isWinterTime(instant: Instant): Boolean {
-        val localDateTime = LocalDateTime.ofInstant(instant, zoneId)
-        val month = localDateTime.monthValue
-        return month < 3 || month > 10
     }
 
     private data class StageInfo(val start: Instant, val end: Instant, val type: String)
@@ -161,10 +155,8 @@ class SleepImporter(
             val start = parseLocalDateTime(startStr)
             val end = parseLocalDateTime(endStr)
 
-            Log.d(TAG, "Parse stage $i: $type $startStr -> $endStr = $start -> $end")
-
             if (start >= end) {
-                Log.w(TAG, "Stage ignorato: start >= end")
+                Log.w(TAG, "Stage $i ignorato: start >= end")
                 continue
             }
 
@@ -178,7 +170,6 @@ class SleepImporter(
                 val firstStart = currentStages.first().start
                 val lastEnd = currentStages.last().end
                 if (firstStart < lastEnd) {
-                    Log.d(TAG, "Nuova sessione creata: $firstStart -> $lastEnd con ${currentStages.size} stage")
                     sessions.add(SessionInfo(firstStart, lastEnd, currentStages.toList()))
                 }
                 currentStages.clear()
@@ -191,32 +182,24 @@ class SleepImporter(
             val firstStart = currentStages.first().start
             val lastEnd = currentStages.last().end
             if (firstStart < lastEnd) {
-                Log.d(TAG, "Ultima sessione: $firstStart -> $lastEnd con ${currentStages.size} stage")
                 sessions.add(SessionInfo(firstStart, lastEnd, currentStages.toList()))
             }
         }
 
-        Log.d(TAG, "Totale sessioni raggruppate: ${sessions.size}")
+        Log.d(TAG, "Totale sessioni: ${sessions.size}")
         return sessions
     }
 
-private fun parseLocalDateTime(dateTimeStr: String): Instant {
-    return try {
-        // Se ha la Z finale, è UTC - usa Instant.parse direttamente
-        if (dateTimeStr.endsWith("Z")) {
-            Log.d(TAG, "Parsing UTC: $dateTimeStr")
-            Instant.parse(dateTimeStr)
-        } else {
-            // Altrimenti è ora locale italiana
-            Log.d(TAG, "Parsing locale: $dateTimeStr")
-            val localDateTime = LocalDateTime.parse(dateTimeStr, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
-            localDateTime.atZone(zoneId).toInstant()
-        }
-    } catch (e: Exception) {
-        Log.e(TAG, "Errore parsing data: $dateTimeStr", e)
-        throw Exception("Formato data non valido: $dateTimeStr - ${e.message}")
+    private fun parseLocalDateTime(dateTimeStr: String): Instant {
+        // Rimuovi la Z e interpreta come ora locale italiana
+        // La Z nei tuoi dati indica "questo è l'orario da usare" ma è già in ora italiana
+        val cleaned = dateTimeStr.replace("Z", "").trim()
+        
+        val localDateTime = LocalDateTime.parse(cleaned, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+        // Converte a Instant usando il fuso orario italiano
+        // Gestisce automaticamente ora legale/solare
+        return localDateTime.atZone(zoneId).toInstant()
     }
-}
 
     private suspend fun checkIfSessionExists(start: Instant, end: Instant): Boolean {
         return try {
@@ -227,17 +210,11 @@ private fun parseLocalDateTime(dateTimeStr: String): Instant {
                 )
             )
 
-            val exists = response.records.any {
+            response.records.any {
                 it.startTime == start && it.endTime == end
             }
-            
-            if (exists) {
-                Log.d(TAG, "Sessione duplicata trovata")
-            }
-            
-            exists
         } catch (e: Exception) {
-            Log.e(TAG, "Errore controllo esistenza: ${e.message}", e)
+            Log.e(TAG, "Errore controllo duplicati: ${e.message}", e)
             false
         }
     }
