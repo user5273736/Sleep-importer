@@ -104,25 +104,28 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun importSleepData() {
-        selectedFileUri?.let { uri ->
-            lifecycleScope.launch {
-                try {
-                    statusText.text = "Importazione..."
-                    importButton.isEnabled = false
-                    
-                    val importer = SleepImporter(healthConnectClient, this@MainActivity)
-                    val result = importer.importFromJsonUri(uri)
-                    
-                    statusText.text = "Importati: ${result.successCount}\nSaltati: ${result.skippedCount}"
-                    Toast.makeText(this@MainActivity, "Completato!", Toast.LENGTH_LONG).show()
-                    
-                    importButton.isEnabled = true
-                } catch (e: Exception) {
-                    statusText.text = "Errore: ${e.message}"
-                    Toast.makeText(this@MainActivity, "Errore: ${e.message}", Toast.LENGTH_LONG).show()
-                    importButton.isEnabled = true
-                }
+    selectedFileUri?.let { uri ->
+        lifecycleScope.launch {
+            try {
+                statusText.text = "Importazione..."
+                importButton.isEnabled = false
+                
+                val importer = SleepImporter(healthConnectClient, this@MainActivity)
+                val result = importer.importFromJsonUri(uri)
+                
+                statusText.text = "Importati: ${result.successCount}\nSaltati: ${result.skippedCount}"
+                Toast.makeText(this@MainActivity, "Completato!", Toast.LENGTH_LONG).show()
+                
+                importButton.isEnabled = true
+            } catch (e: Exception) {
+                e.printStackTrace()
+                // MOSTRA L'ERRORE COMPLETO
+                val errorMsg = e.stackTraceToString()
+                statusText.text = "ERRORE:\n${e.message}\n\n${errorMsg.take(500)}"
+                Toast.makeText(this@MainActivity, "Errore: ${e.message}", Toast.LENGTH_LONG).show()
+                importButton.isEnabled = true
             }
         }
     }
+}
 }
