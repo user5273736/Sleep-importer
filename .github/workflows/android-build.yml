@@ -33,3 +33,6 @@ jobs:
       with:
         name: sleep-importer-debug
         path: app/build/outputs/apk/debug/app-debug.apk
+
+    - name: Clean project
+      run: ./gradlew clean
