@@ -156,71 +156,64 @@ try {
     private data class StageInfo(val start: Instant, val end: Instant, val type: String)
     private data class SessionInfo(val start: Instant, val end: Instant, val stages: List<StageInfo>)
 
-    private fun groupStagesBySession(json: JSONArray): List<SessionInfo> {
-        if (json.length() == 0) return emptyList()
+private fun groupStagesBySession(json: JSONArray): List<SessionInfo> {
+    if (json.length() == 0) return emptyList()
 
-        val sessions = mutableListOf<SessionInfo>()
-        val currentStages = mutableListOf<StageInfo>()
+    val sessions = mutableListOf<SessionInfo>()
+    val currentStages = mutableListOf<StageInfo>()
 
-        for (i in 0 until json.length()) {
-            val obj = json.getJSONObject(i)
-            val start = parseLocalDateTime(obj.getString("startTime"))
-            val end = parseLocalDateTime(obj.getString("endTime"))
-            val type = obj.getString("stage")
+    for (i in 0 until json.length()) {
+        val obj = json.getJSONObject(i)
+        val start = parseInstant(obj.getString("startTime"))
+        val end = parseInstant(obj.getString("endTime"))
+        val type = obj.getString("stage")
 
-            if (start >= end) {
-                Log.w(TAG, "Stage ignorato: start >= end")
-                continue
-            }
+        Log.d(TAG, "Stage $i: $type - start: $start, end: $end")
 
-            val gap = if (currentStages.isNotEmpty()) {
-                java.time.Duration.between(currentStages.last().end, start).toMinutes()
-            } else {
-                0
-            }
-
-            if (gap > 30 && currentStages.isNotEmpty()) {
-                val firstStart = currentStages.first().start
-                val lastEnd = currentStages.last().end
-                if (firstStart < lastEnd) {
-                    sessions.add(SessionInfo(firstStart, lastEnd, currentStages.toList()))
-                }
-                currentStages.clear()
-            }
-
-            currentStages.add(StageInfo(start, end, type))
+        if (start >= end) {
+            Log.w(TAG, "Stage ignorato: start >= end")
+            continue
         }
 
-        if (currentStages.isNotEmpty()) {
+        val gap = if (currentStages.isNotEmpty()) {
+            java.time.Duration.between(currentStages.last().end, start).toMinutes()
+        } else {
+            0
+        }
+
+        if (gap > 30 && currentStages.isNotEmpty()) {
             val firstStart = currentStages.first().start
             val lastEnd = currentStages.last().end
             if (firstStart < lastEnd) {
                 sessions.add(SessionInfo(firstStart, lastEnd, currentStages.toList()))
             }
+            currentStages.clear()
         }
 
-        return sessions
+        currentStages.add(StageInfo(start, end, type))
     }
 
-    private fun parseLocalDateTime(dateTimeStr: String): Instant {
-    return OffsetDateTime.parse(dateTimeStr).toInstant()
+    if (currentStages.isNotEmpty()) {
+        val firstStart = currentStages.first().start
+        val lastEnd = currentStages.last().end
+        if (firstStart < lastEnd) {
+            sessions.add(SessionInfo(firstStart, lastEnd, currentStages.toList()))
+        }
+    }
+
+    Log.d(TAG, "Sessioni raggruppate: ${sessions.size}")
+    return sessions
 }
 
-    private suspend fun checkIfSessionExists(start: Instant, end: Instant): Boolean {
-        return try {
-            val response = client.readRecords(
-                ReadRecordsRequest(
-                    recordType = SleepSessionRecord::class,
-                    timeRangeFilter = TimeRangeFilter.between(start, end)
-                )
-            )
 
-            response.records.any {
-                it.startTime == start && it.endTime == end
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Errore controllo esistenza: ${e.message}", e)
-            false
-        }
-    }
+private fun parseInstant(dateTimeStr: String): Instant {
+    return Instant.parse(dateTimeStr)
+}
+
+
+private suspend fun checkIfSessionExists(start: Instant, end: Instant): Boolean {
+    Log.d(TAG, "checkIfSessionExists: disabilitato temporaneamente per debug")
+    return false // forza a non considerare mai esistente, per debug
+}
+
 }
