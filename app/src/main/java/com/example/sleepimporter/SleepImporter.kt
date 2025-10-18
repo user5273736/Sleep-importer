@@ -12,7 +12,6 @@ import org.json.JSONArray
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
-import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
 class SleepImporter(
@@ -43,11 +42,11 @@ class SleepImporter(
             }
 
             val sleepStages = stages.mapNotNull { stage ->
-                val stageType = when (stage.type.uppercase()) {
-                    "LIGHT" -> SleepSessionRecord.StageType.LIGHT
-                    "DEEP" -> SleepSessionRecord.StageType.DEEP
-                    "REM" -> SleepSessionRecord.StageType.REM
-                    "AWAKE" -> SleepSessionRecord.StageType.AWAKE
+                val stageValue = when (stage.type.uppercase()) {
+                    "AWAKE" -> 1
+                    "LIGHT" -> 2
+                    "DEEP" -> 3
+                    "REM" -> 4
                     else -> {
                         skippedStages++
                         return@mapNotNull null
@@ -57,7 +56,7 @@ class SleepImporter(
                 SleepSessionRecord.Stage(
                     startTime = stage.start,
                     endTime = stage.end,
-                    stage = stageType
+                    stage = stageValue
                 )
             }
 
