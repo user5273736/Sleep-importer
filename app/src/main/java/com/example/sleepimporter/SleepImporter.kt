@@ -97,6 +97,17 @@ class SleepImporter(
             val startOffset = ZoneOffset.ofHours(if (isWinterTime(sessionStart)) 1 else 2)
             val endOffset = ZoneOffset.ofHours(if (isWinterTime(sessionEnd)) 1 else 2)
 
+            Log.d(TAG, "Creazione sessione: start=$sessionStart, end=$sessionEnd, stages=${sleepStages.size}")
+
+require(sessionStart.isBefore(sessionEnd)) { "sessionStart deve essere prima di sessionEnd" }
+
+for (stage in sleepStages) {
+    require(!stage.startTime.isBefore(sessionStart)) { "stage.startTime (${stage.startTime}) deve essere >= sessionStart ($sessionStart)" }
+    require(!stage.endTime.isAfter(sessionEnd)) { "stage.endTime (${stage.endTime}) deve essere <= sessionEnd ($sessionEnd)" }
+    require(stage.startTime.isBefore(stage.endTime)) { "stage.startTime (${stage.startTime}) deve essere prima di stage.endTime (${stage.endTime})" }
+}
+
+            
             val session = SleepSessionRecord(
                 startTime = sessionStart,
                 startZoneOffset = startOffset,
