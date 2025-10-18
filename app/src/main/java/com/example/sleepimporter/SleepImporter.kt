@@ -15,6 +15,7 @@ import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
+import java.time.OffsetDateTime
 
 class SleepImporter(
     private val client: HealthConnectClient,
@@ -174,9 +175,8 @@ class SleepImporter(
     }
 
     private fun parseLocalDateTime(dateTimeStr: String): Instant {
-        val localDateTime = LocalDateTime.parse(dateTimeStr, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
-        return localDateTime.atZone(zoneId).toInstant()
-    }
+    return OffsetDateTime.parse(dateTimeStr).toInstant()
+}
 
     private suspend fun checkIfSessionExists(start: Instant, end: Instant): Boolean {
         return try {
