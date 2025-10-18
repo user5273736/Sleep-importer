@@ -114,48 +114,52 @@ class SleepImporter(
 
             val startLocal = LocalDateTime.ofInstant(sessionStart, zoneId)
             val endLocal = LocalDateTime.ofInstant(sessionEnd, zoneId)
-            val startOffset = zoneId.rules.getOffset(startLocal)
-            val endOffset = zoneId.rules.getOffset(endLocal)
 
-            Log.d(TAG, "Offset: start=$startOffset, end=$endOffset")
+            // ...
+            val startOffset = zoneId.rules.getOffset(startLocal)
+            val endOffset = zoneId.rules.getOffset(endLocal)
 
-            // Piccolo delay tra ogni inserimento
-            delay(50)
+            Log.d(TAG, "Offset: start=$startOffset, end=$endOffset")
 
-            try {
-                val session = SleepSessionRecord(
-                    startTime = sessionStart,
-                    startZoneOffset = startOffset,
-                    endTime = sessionEnd,
-                    endZoneOffset = endOffset,
-                    stages = sleepStages
-                )
-                
-                client.insertRecords(listOf(session))
-                successSessions++
-                Log.d(TAG, "✓ Sessione importata!")
-            } catch (e: Exception) {
-                // Gestione specifica del rate limiting
-                if (e.message?.contains("Rate limited") == true || 
-                    e.message?.contains("quota has been exceeded") == true) {
-                    Log.w(TAG, "Rate limit raggiunto, attendo 5 secondi...")
-                    delay(5000)
-                    
-                    // Riprova una volta
-                    try {
-                        client.insertRecords(listOf(session))
-                        successSessions++
-                        Log.d(TAG, "✓ Sessione importata (dopo retry)!")
-                    } catch (e2: Exception) {
-                        Log.e(TAG, "✗ Errore anche dopo retry: ${e2.message}", e2)
-                        skippedStages += stages.size
-                    }
-                } else {
-                    Log.e(TAG, "✗ Errore importazione: ${e.message}", e)
-                    skippedStages += stages.size
-                }
-            }
-        }
+            // Piccolo delay tra ogni inserimento
+            delay(50)
+
+            // 🌟 CORREZIONE: DICHIARA 'session' FUORI dal try-catch
+            val session = SleepSessionRecord(
+                startTime = sessionStart,
+                startZoneOffset = startOffset,
+                endTime = sessionEnd,
+                endZoneOffset = endOffset,
+                stages = sleepStages
+            )
+            
+            try {
+                // ⚠️ Rimuovi 'val' qui! Ora 'session' è già dichiarata.
+                client.insertRecords(listOf(session))
+                successSessions++
+                Log.d(TAG, "✓ Sessione importata!")
+            } catch (e: Exception) {
+                // Gestione specifica del rate limiting
+                if (e.message?.contains("Rate limited") == true || 
+                    e.message?.contains("quota has been exceeded") == true) {
+                    Log.w(TAG, "Rate limit raggiunto, attendo 5 secondi...")
+                    delay(5000)
+                    
+                    // Riprova una volta
+                    try {
+                        client.insertRecords(listOf(session)) // <--- Ora 'session' è risolta!
+                        successSessions++
+                        Log.d(TAG, "✓ Sessione importata (dopo retry)!")
+                    } catch (e2: Exception) {
+                        Log.e(TAG, "✗ Errore anche dopo retry: ${e2.message}", e2)
+                        skippedStages += stages.size
+                    }
+                } else {
+                    Log.e(TAG, "✗ Errore importazione: ${e.message}", e)
+                    skippedStages += stages.size
+                }
+            }
+// ...
 
         Log.d(TAG, "Completato: $successSessions sessioni, $skippedStages stage saltati")
         ImportResult(successCount = successSessions, skippedCount = skippedStages)
