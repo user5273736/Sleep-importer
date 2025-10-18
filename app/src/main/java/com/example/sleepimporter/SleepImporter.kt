@@ -125,20 +125,22 @@ class SleepImporter(
             delay(50)
 
             // 🌟 CORREZIONE: DICHIARA 'session' FUORI dal try-catch
-            val session = SleepSessionRecord(
-                startTime = sessionStart,
-                startZoneOffset = startOffset,
-                endTime = sessionEnd,
-                endZoneOffset = endOffset,
-                stages = sleepStages
-            )
-            
-            try {
-                // ⚠️ Rimuovi 'val' qui! Ora 'session' è già dichiarata.
-                client.insertRecords(listOf(session))
-                successSessions++
-                Log.d(TAG, "✓ Sessione importata!")
-            } catch (e: Exception) {
+// This is outside the try-catch and visible everywhere:
+            val session = SleepSessionRecord(
+                startTime = sessionStart,
+                startZoneOffset = startOffset,
+                endTime = sessionEnd,
+                endZoneOffset = endOffset,
+                stages = sleepStages
+            )
+
+            try {
+                // Use 'session' without 'val'
+                client.insertRecords(listOf(session)) 
+                successSessions++
+                Log.d(TAG, "✓ Sessione importata!")
+            } catch (e: Exception) {
+                // ... (retry logic here, also using 'session' without 'val')
                 // Gestione specifica del rate limiting
                 if (e.message?.contains("Rate limited") == true || 
                     e.message?.contains("quota has been exceeded") == true) {
