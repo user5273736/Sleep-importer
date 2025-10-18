@@ -1,6 +1,5 @@
 package com.example.sleepimporter
 
-import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Button
@@ -10,8 +9,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
-import androidx.health.connect.client.records.SleepSessionRecord
-import androidx.health.connect.client.records.SleepStageRecord
 import androidx.health.connect.client.permission.HealthPermission
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.lifecycle.lifecycleScope
@@ -26,9 +23,9 @@ class MainActivity : ComponentActivity() {
     private var selectedFileUri: Uri? = null
 
     private val permissions = setOf(
-    HealthPermission.getWritePermission(SleepSessionRecord::class),
-    HealthPermission.getReadPermission(SleepSessionRecord::class)
-)
+        HealthPermission.getWritePermission(SleepSessionRecord::class),
+        HealthPermission.getReadPermission(SleepSessionRecord::class)
+    )
 
     private val filePickerLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
@@ -42,7 +39,7 @@ class MainActivity : ComponentActivity() {
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
-    ) { result ->
+    ) { 
         checkPermissionsAndEnableImport()
     }
 
@@ -54,8 +51,9 @@ class MainActivity : ComponentActivity() {
         selectButton = findViewById(R.id.selectButton)
         importButton = findViewById(R.id.importButton)
 
-        if (!HealthConnectClient.isAvailable(this)) {
-            statusText.text = "Health Connect non disponibile su questo dispositivo"
+        val sdkStatus = HealthConnectClient.sdkStatus(this)
+        if (sdkStatus != HealthConnectClient.SDK_AVAILABLE) {
+            statusText.text = "Health Connect non disponibile"
             selectButton.isEnabled = false
             return
         }
@@ -117,17 +115,17 @@ class MainActivity : ComponentActivity() {
                     val importer = SleepImporter(healthConnectClient, this@MainActivity)
                     val result = importer.importFromJsonUri(uri)
                     
-                    statusText.text = "✓ Importati: ${result.successCount} record\n✗ Duplicati: ${result.skippedCount}"
+                    statusText.text = "Importati: ${result.successCount} sessioni\nSaltati: ${result.skippedCount} stage"
                     Toast.makeText(
                         this@MainActivity, 
-                        "Importazione completata!\n${result.successCount} record aggiunti", 
+                        "Completato! ${result.successCount} sessioni aggiunte", 
                         Toast.LENGTH_LONG
                     ).show()
                     
                     importButton.isEnabled = true
                 } catch (e: Exception) {
                     e.printStackTrace()
-                    statusText.text = "Errore durante l'importazione"
+                    statusText.text = "Errore: ${e.message}"
                     Toast.makeText(this@MainActivity, "Errore: ${e.message}", Toast.LENGTH_LONG).show()
                     importButton.isEnabled = true
                 }
