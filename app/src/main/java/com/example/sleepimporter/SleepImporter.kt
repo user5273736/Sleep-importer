@@ -15,7 +15,6 @@ import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
-import java.time.OffsetDateTime
 
 class SleepImporter(
     private val client: HealthConnectClient,
@@ -36,17 +35,7 @@ class SleepImporter(
         
         val stagesBySession = groupStagesBySession(json)
         Log.d(TAG, "Raggruppati in ${stagesBySession.size} sessioni")
-for (i in 0 until json.length()) {
-    val obj = json.getJSONObject(i)
-    val start = parseInstant(obj.getString("startTime"))
-    val end = parseInstant(obj.getString("endTime"))
-    val type = obj.getString("stage")
-
-    Log.d(TAG, "Stage $i: $type - start: $start, end: $end")
-
-    // resto del codice...
-}
-
+        
         var successSessions = 0
         var skippedStages = 0
 
@@ -70,9 +59,23 @@ for (i in 0 until json.length()) {
 
             val sleepStages = mutableListOf<SleepSessionRecord.Stage>()
             
-            for (stage in stages) {
+            for ((stageIndex, stage) in stages.withIndex()) {
+                Log.d(TAG, "  Stage $stageIndex: ${stage.type} ${stage.start} -> ${stage.end}")
+                
                 if (stage.start >= stage.end) {
-                    Log.w(TAG, "Stage saltato: start >= end")
+                    Log.w(TAG, "  Stage saltato: start >= end")
+                    skippedStages++
+                    continue
+                }
+
+                if (stage.start < sessionStart) {
+                    Log.e(TAG, "  ERRORE: stage.start < sessionStart")
+                    skippedStages++
+                    continue
+                }
+
+                if (stage.end > sessionEnd) {
+                    Log.e(TAG, "  ERRORE: stage.end > sessionEnd")
                     skippedStages++
                     continue
                 }
@@ -83,7 +86,7 @@ for (i in 0 until json.length()) {
                     "DEEP" -> 3
                     "REM" -> 4
                     else -> {
-                        Log.w(TAG, "Stage tipo sconosciuto: ${stage.type}")
+                        Log.w(TAG, "  Stage tipo sconosciuto: ${stage.type}")
                         skippedStages++
                         continue
                     }
@@ -107,40 +110,24 @@ for (i in 0 until json.length()) {
             val startOffset = ZoneOffset.ofHours(if (isWinterTime(sessionStart)) 1 else 2)
             val endOffset = ZoneOffset.ofHours(if (isWinterTime(sessionEnd)) 1 else 2)
 
-            Log.d(TAG, "Creazione sessione: start=$sessionStart, end=$sessionEnd, stages=${sleepStages.size}")
+            Log.d(TAG, "Tentativo inserimento sessione con ${sleepStages.size} stage validi")
 
-// Controllo sessione
-if (!sessionStart.isBefore(sessionEnd)) {
-    Log.e(TAG, "Errore: sessionStart NON è prima di sessionEnd")
-}
-
-// Controllo ogni stage
-sleepStages.forEachIndexed { index, stage ->
-    if (stage.startTime.isBefore(sessionStart)) {
-        Log.e(TAG, "Stage $index errore: stage.startTime (${stage.startTime}) < sessionStart ($sessionStart)")
-    }
-    if (stage.endTime.isAfter(sessionEnd)) {
-        Log.e(TAG, "Stage $index errore: stage.endTime (${stage.endTime}) > sessionEnd ($sessionEnd)")
-    }
-    if (!stage.startTime.isBefore(stage.endTime)) {
-        Log.e(TAG, "Stage $index errore: stage.startTime (${stage.startTime}) NON è prima di stage.endTime (${stage.endTime})")
-    }
-}
-
-// Se i controlli passano, crea la sessione
-try {
-    val session = SleepSessionRecord(
-        startTime = sessionStart,
-        startZoneOffset = startOffset,
-        endTime = sessionEnd,
-        endZoneOffset = endOffset,
-        stages = sleepStages
-    )
-    // Resto del codice...
-} catch (e: Exception) {
-    Log.e(TAG, "Errore nella creazione di SleepSessionRecord: ${e.message}", e)
-}
-
+            try {
+                val session = SleepSessionRecord(
+                    startTime = sessionStart,
+                    startZoneOffset = startOffset,
+                    endTime = sessionEnd,
+                    endZoneOffset = endOffset,
+                    stages = sleepStages
+                )
+                
+                client.insertRecords(listOf(session))
+                successSessions++
+                Log.d(TAG, "✓ Sessione importata con successo!")
+            } catch (e: Exception) {
+                Log.e(TAG, "✗ Errore importazione: ${e.message}", e)
+                skippedStages += stages.size
+            }
         }
 
         Log.d(TAG, "Import completato: $successSessions sessioni, $skippedStages stage saltati")
@@ -156,64 +143,90 @@ try {
     private data class StageInfo(val start: Instant, val end: Instant, val type: String)
     private data class SessionInfo(val start: Instant, val end: Instant, val stages: List<StageInfo>)
 
-private fun groupStagesBySession(json: JSONArray): List<SessionInfo> {
-    if (json.length() == 0) return emptyList()
-
-    val sessions = mutableListOf<SessionInfo>()
-    val currentStages = mutableListOf<StageInfo>()
-
-    for (i in 0 until json.length()) {
-        val obj = json.getJSONObject(i)
-        val start = parseInstant(obj.getString("startTime"))
-        val end = parseInstant(obj.getString("endTime"))
-        val type = obj.getString("stage")
-
-        Log.d(TAG, "Stage $i: $type - start: $start, end: $end")
-
-        if (start >= end) {
-            Log.w(TAG, "Stage ignorato: start >= end")
-            continue
+    private fun groupStagesBySession(json: JSONArray): List<SessionInfo> {
+        if (json.length() == 0) {
+            Log.d(TAG, "JSON vuoto")
+            return emptyList()
         }
 
-        val gap = if (currentStages.isNotEmpty()) {
-            java.time.Duration.between(currentStages.last().end, start).toMinutes()
-        } else {
-            0
+        val sessions = mutableListOf<SessionInfo>()
+        val currentStages = mutableListOf<StageInfo>()
+
+        for (i in 0 until json.length()) {
+            val obj = json.getJSONObject(i)
+            val startStr = obj.getString("startTime")
+            val endStr = obj.getString("endTime")
+            val type = obj.getString("stage")
+
+            val start = parseLocalDateTime(startStr)
+            val end = parseLocalDateTime(endStr)
+
+            Log.d(TAG, "Parse stage $i: $type $startStr -> $endStr = $start -> $end")
+
+            if (start >= end) {
+                Log.w(TAG, "Stage ignorato: start >= end")
+                continue
+            }
+
+            val gap = if (currentStages.isNotEmpty()) {
+                java.time.Duration.between(currentStages.last().end, start).toMinutes()
+            } else {
+                0
+            }
+
+            if (gap > 30 && currentStages.isNotEmpty()) {
+                val firstStart = currentStages.first().start
+                val lastEnd = currentStages.last().end
+                if (firstStart < lastEnd) {
+                    Log.d(TAG, "Nuova sessione creata: $firstStart -> $lastEnd con ${currentStages.size} stage")
+                    sessions.add(SessionInfo(firstStart, lastEnd, currentStages.toList()))
+                }
+                currentStages.clear()
+            }
+
+            currentStages.add(StageInfo(start, end, type))
         }
 
-        if (gap > 30 && currentStages.isNotEmpty()) {
+        if (currentStages.isNotEmpty()) {
             val firstStart = currentStages.first().start
             val lastEnd = currentStages.last().end
             if (firstStart < lastEnd) {
+                Log.d(TAG, "Ultima sessione: $firstStart -> $lastEnd con ${currentStages.size} stage")
                 sessions.add(SessionInfo(firstStart, lastEnd, currentStages.toList()))
             }
-            currentStages.clear()
         }
 
-        currentStages.add(StageInfo(start, end, type))
+        Log.d(TAG, "Totale sessioni raggruppate: ${sessions.size}")
+        return sessions
     }
 
-    if (currentStages.isNotEmpty()) {
-        val firstStart = currentStages.first().start
-        val lastEnd = currentStages.last().end
-        if (firstStart < lastEnd) {
-            sessions.add(SessionInfo(firstStart, lastEnd, currentStages.toList()))
+    private fun parseLocalDateTime(dateTimeStr: String): Instant {
+        val localDateTime = LocalDateTime.parse(dateTimeStr, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+        val instant = localDateTime.atZone(zoneId).toInstant()
+        return instant
+    }
+
+    private suspend fun checkIfSessionExists(start: Instant, end: Instant): Boolean {
+        return try {
+            val response = client.readRecords(
+                ReadRecordsRequest(
+                    recordType = SleepSessionRecord::class,
+                    timeRangeFilter = TimeRangeFilter.between(start, end)
+                )
+            )
+
+            val exists = response.records.any {
+                it.startTime == start && it.endTime == end
+            }
+            
+            if (exists) {
+                Log.d(TAG, "Sessione duplicata trovata")
+            }
+            
+            exists
+        } catch (e: Exception) {
+            Log.e(TAG, "Errore controllo esistenza: ${e.message}", e)
+            false
         }
     }
-
-    Log.d(TAG, "Sessioni raggruppate: ${sessions.size}")
-    return sessions
-}
-
-
-private fun parseInstant(dateTimeStr: String): Instant {
-    return Instant.parse(dateTimeStr)
-}
-
-
-private suspend fun checkIfSessionExists(start: Instant, end: Instant): Boolean {
-    Log.d(TAG, "checkIfSessionExists: disabilitato temporaneamente per debug")
-    return false // forza a non considerare mai esistente, per debug
-}
-
 }
