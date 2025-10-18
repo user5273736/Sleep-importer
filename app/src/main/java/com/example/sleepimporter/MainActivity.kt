@@ -12,6 +12,8 @@ import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.records.SleepStageRecord
+import androidx.health.connect.client.permission.HealthPermission
+import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 
@@ -24,11 +26,9 @@ class MainActivity : ComponentActivity() {
     private var selectedFileUri: Uri? = null
 
     private val permissions = setOf(
-        SleepSessionRecord.WRITE_PERMISSION,
-        SleepStageRecord.WRITE_PERMISSION,
-        SleepSessionRecord.READ_PERMISSION,
-        SleepStageRecord.READ_PERMISSION
-    )
+    HealthPermission.getWritePermission(SleepSessionRecord::class),
+    HealthPermission.getReadPermission(SleepSessionRecord::class)
+)
 
     private val filePickerLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
