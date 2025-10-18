@@ -8,7 +8,6 @@ import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import java.time.Instant
@@ -42,12 +41,6 @@ class SleepImporter(
 
         for ((index, sessionInfo) in stagesBySession.withIndex()) {
             val (sessionStart, sessionEnd, stages) = sessionInfo
-
-// 👈 1. RITARDO DI MASSA (Rate Limiting check)
-            if (index > 0 && index % 50 == 0) {
-                Log.w(TAG, "Pausa di 5 secondi per il rate limiting dopo $index sessioni...")
-                delay(5000) 
-            }
             
             Log.d(TAG, "Sessione $index: $sessionStart -> $sessionEnd (${stages.size} stage)")
             
@@ -119,42 +112,21 @@ class SleepImporter(
 
             Log.d(TAG, "Offset: start=$startOffset, end=$endOffset")
 
-            // 👈 2. Ritardo minimo tra le singole sessioni
-            delay(50)
-
-            val session = SleepSessionRecord(
-                startTime = sessionStart,
-                startZoneOffset = startOffset,
-                endTime = sessionEnd,
-                endZoneOffset = endOffset,
-                stages = sleepStages
-            )
-            
             try {
+                val session = SleepSessionRecord(
+                    startTime = sessionStart,
+                    startZoneOffset = startOffset,
+                    endTime = sessionEnd,
+                    endZoneOffset = endOffset,
+                    stages = sleepStages
+                )
                 
                 client.insertRecords(listOf(session))
                 successSessions++
                 Log.d(TAG, "✓ Sessione importata!")
             } catch (e: Exception) {
-// 👈 3. GESTIONE RATE LIMIT E RETRY
-                if (e.message?.contains("Rate limited") == true || 
-                    e.message?.contains("quota has been exceeded") == true) {
-                    Log.w(TAG, "Rate limit raggiunto, attendo 5 secondi e riprovo...")
-                    delay(5000) 
-                    
-                    // Riprova una volta
-                    try {
-                        client.insertRecords(listOf(session))
-                        successSessions++
-                        Log.d(TAG, "✓ Sessione importata (dopo retry)!")
-                    } catch (e2: Exception) {
-                        Log.e(TAG, "✗ Errore fatale anche dopo retry: ${e2.message}", e2)
-                        skippedStages += stages.size
-                    }
-                } else {
-                    Log.e(TAG, "✗ Errore importazione: ${e.message}", e)
-                    skippedStages += stages.size
-                }
+                Log.e(TAG, "✗ Errore importazione: ${e.message}", e)
+                skippedStages += stages.size
             }
         }
 
