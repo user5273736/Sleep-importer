@@ -42,12 +42,12 @@ class SleepImporter(
 
         for ((index, sessionInfo) in stagesBySession.withIndex()) {
             val (sessionStart, sessionEnd, stages) = sessionInfo
-            
-            // Pausa ogni 50 sessioni per evitare rate limiting
-            if (index > 0 && index % 50 == 0) {
-                Log.d(TAG, "Pausa rate limiting dopo $index sessioni...")
-                delay(3000) // 3 secondi di pausa
-            }
+
+// 👈 1. RITARDO DI MASSA (Rate Limiting check)
+            if (index > 0 && index % 50 == 0) {
+                Log.w(TAG, "Pausa di 5 secondi per il rate limiting dopo $index sessioni...")
+                delay(5000) 
+            }
             
             Log.d(TAG, "Sessione $index: $sessionStart -> $sessionEnd (${stages.size} stage)")
             
@@ -114,18 +114,14 @@ class SleepImporter(
 
             val startLocal = LocalDateTime.ofInstant(sessionStart, zoneId)
             val endLocal = LocalDateTime.ofInstant(sessionEnd, zoneId)
+            val startOffset = zoneId.rules.getOffset(startLocal)
+            val endOffset = zoneId.rules.getOffset(endLocal)
 
-            // ...
-            val startOffset = zoneId.rules.getOffset(startLocal)
-            val endOffset = zoneId.rules.getOffset(endLocal)
+            Log.d(TAG, "Offset: start=$startOffset, end=$endOffset")
 
-            Log.d(TAG, "Offset: start=$startOffset, end=$endOffset")
+            // 👈 2. Ritardo minimo tra le singole sessioni
+            delay(50)
 
-            // Piccolo delay tra ogni inserimento
-            delay(50)
-
-            // 🌟 CORREZIONE: DICHIARA 'session' FUORI dal try-catch
-// This is outside the try-catch and visible everywhere:
             val session = SleepSessionRecord(
                 startTime = sessionStart,
                 startZoneOffset = startOffset,
@@ -133,35 +129,34 @@ class SleepImporter(
                 endZoneOffset = endOffset,
                 stages = sleepStages
             )
-
+            
             try {
-                // Use 'session' without 'val'
-                client.insertRecords(listOf(session)) 
+                
+                client.insertRecords(listOf(session))
                 successSessions++
                 Log.d(TAG, "✓ Sessione importata!")
             } catch (e: Exception) {
-                // ... (retry logic here, also using 'session' without 'val')
-                // Gestione specifica del rate limiting
+// 👈 3. GESTIONE RATE LIMIT E RETRY
                 if (e.message?.contains("Rate limited") == true || 
                     e.message?.contains("quota has been exceeded") == true) {
-                    Log.w(TAG, "Rate limit raggiunto, attendo 5 secondi...")
-                    delay(5000)
+                    Log.w(TAG, "Rate limit raggiunto, attendo 5 secondi e riprovo...")
+                    delay(5000) 
                     
                     // Riprova una volta
                     try {
-                        client.insertRecords(listOf(session)) // <--- Ora 'session' è risolta!
+                        client.insertRecords(listOf(session))
                         successSessions++
                         Log.d(TAG, "✓ Sessione importata (dopo retry)!")
                     } catch (e2: Exception) {
-                        Log.e(TAG, "✗ Errore anche dopo retry: ${e2.message}", e2)
+                        Log.e(TAG, "✗ Errore fatale anche dopo retry: ${e2.message}", e2)
                         skippedStages += stages.size
                     }
                 } else {
                     Log.e(TAG, "✗ Errore importazione: ${e.message}", e)
                     skippedStages += stages.size
                 }
-            }
-// ...
+            }
+        }
 
         Log.d(TAG, "Completato: $successSessions sessioni, $skippedStages stage saltati")
         ImportResult(successCount = successSessions, skippedCount = skippedStages)
@@ -224,8 +219,13 @@ class SleepImporter(
     }
 
     private fun parseLocalDateTime(dateTimeStr: String): Instant {
+        // Rimuovi la Z e interpreta come ora locale italiana
+        // La Z nei tuoi dati indica "questo è l'orario da usare" ma è già in ora italiana
         val cleaned = dateTimeStr.replace("Z", "").trim()
+        
         val localDateTime = LocalDateTime.parse(cleaned, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+        // Converte a Instant usando il fuso orario italiano
+        // Gestisce automaticamente ora legale/solare
         return localDateTime.atZone(zoneId).toInstant()
     }
 
