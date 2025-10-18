@@ -8,17 +8,18 @@ import androidx.health.connect.client.records.SleepSessionRecord
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.ZoneId
-import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 
 class SleepImporter(
     private val client: HealthConnectClient,
-    private val context: Context
+    private val context: Context,
+    private val minDelayMillis: Long = 2000L // default 2 secondi tra upload
 ) {
     data class ImportResult(val successCount: Int, val skippedCount: Int)
 
@@ -124,6 +125,12 @@ class SleepImporter(
                 client.insertRecords(listOf(session))
                 successSessions++
                 Log.d(TAG, "✓ Sessione importata!")
+
+                // Ritardo richiesto tra un upload e il successivo
+                if (minDelayMillis > 0 && index != stagesBySession.lastIndex) {
+                    Log.d(TAG, "Attendo ${minDelayMillis}ms prima del prossimo upload")
+                    delay(minDelayMillis)
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "✗ Errore importazione: ${e.message}", e)
                 skippedStages += stages.size
@@ -192,12 +199,9 @@ class SleepImporter(
 
     private fun parseLocalDateTime(dateTimeStr: String): Instant {
         // Rimuovi la Z e interpreta come ora locale italiana
-        // La Z nei tuoi dati indica "questo è l'orario da usare" ma è già in ora italiana
         val cleaned = dateTimeStr.replace("Z", "").trim()
         
         val localDateTime = LocalDateTime.parse(cleaned, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
-        // Converte a Instant usando il fuso orario italiano
-        // Gestisce automaticamente ora legale/solare
         return localDateTime.atZone(zoneId).toInstant()
     }
 
