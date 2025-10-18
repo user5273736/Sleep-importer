@@ -19,7 +19,7 @@ import java.time.format.DateTimeFormatter
 class SleepImporter(
     private val client: HealthConnectClient,
     private val context: Context,
-    private val minDelayMillis: Long = 2000L // default 2 secondi tra upload
+    private val minDelayMillis: Long = 2000L
 ) {
     data class ImportResult(val successCount: Int, val skippedCount: Int)
 
@@ -81,9 +81,9 @@ class SleepImporter(
 
                 val stageValue = when (stage.type.uppercase()) {
                     "AWAKE" -> 1
-                    "LIGHT" -> 2
-                    "DEEP" -> 3
-                    "REM" -> 4
+                    "LIGHT" -> 4
+                    "DEEP" -> 5
+                    "REM" -> 6
                     else -> {
                         Log.w(TAG, "Stage tipo sconosciuto: ${stage.type}")
                         skippedStages++
@@ -106,12 +106,23 @@ class SleepImporter(
                 continue
             }
 
+            // Aggiungi stage SLEEPING se mancante (richiesto da Samsung Health)
+            val hasSleepingOrOtherStages = sleepStages.any { it.stage in listOf(2, 4, 5, 6) }
+            if (!hasSleepingOrOtherStages) {
+                Log.w(TAG, "Sessione senza stage di sonno validi, aggiungo SLEEPING")
+                sleepStages.add(0, SleepSessionRecord.Stage(
+                    startTime = sessionStart,
+                    endTime = sessionEnd,
+                    stage = 2  // SLEEPING generico
+                ))
+            }
+
             val startLocal = LocalDateTime.ofInstant(sessionStart, zoneId)
             val endLocal = LocalDateTime.ofInstant(sessionEnd, zoneId)
             val startOffset = zoneId.rules.getOffset(startLocal)
             val endOffset = zoneId.rules.getOffset(endLocal)
 
-            Log.d(TAG, "Offset: start=$startOffset, end=$endOffset")
+            Log.d(TAG, "Offset: start=$startOffset, end=$endOffset, stages totali=${sleepStages.size}")
 
             try {
                 val session = SleepSessionRecord(
@@ -126,9 +137,7 @@ class SleepImporter(
                 successSessions++
                 Log.d(TAG, "✓ Sessione importata!")
 
-                // Ritardo richiesto tra un upload e il successivo
                 if (minDelayMillis > 0 && index != stagesBySession.lastIndex) {
-                    Log.d(TAG, "Attendo ${minDelayMillis}ms prima del prossimo upload")
                     delay(minDelayMillis)
                 }
             } catch (e: Exception) {
@@ -198,9 +207,7 @@ class SleepImporter(
     }
 
     private fun parseLocalDateTime(dateTimeStr: String): Instant {
-        // Rimuovi la Z e interpreta come ora locale italiana
         val cleaned = dateTimeStr.replace("Z", "").trim()
-        
         val localDateTime = LocalDateTime.parse(cleaned, DateTimeFormatter.ISO_LOCAL_DATE_TIME)
         return localDateTime.atZone(zoneId).toInstant()
     }
